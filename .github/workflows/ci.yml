@@ -81,6 +81,7 @@ jobs:
           name: icli-ios16-${{ github.sha }}
           if-no-files-found: warn
           retention-days: 7
+          include-hidden-files: true
           path: |
             .build/icli
             .build/com.icli.icli_*_iphoneos-arm64.deb
@@ -139,16 +140,38 @@ jobs:
               output.write('- Runtime/device acceptance: **not run in GitHub Actions**\n')
           PY
 
-      - name: Upload iOS 13 legacy artifacts
+      - name: Upload installable iOS 13 DEB
+        id: upload-ios13-deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: icli-ios13-rootful-deb
+          path: .build/com.icli.icli_*_iphoneos-arm-ios13.deb
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
+          compression-level: 0
+
+      - name: Add DEB download link to summary
+        env:
+          DEB_ARTIFACT_URL: ${{ steps.upload-ios13-deb.outputs.artifact-url }}
+        run: |
+          {
+            echo
+            echo '### Download'
+            echo
+            echo "[Download iOS 13 rootful DEB artifact]($DEB_ARTIFACT_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload iOS 13 legacy debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: icli-ios13-rootful-${{ github.sha }}
+          name: icli-ios13-rootful-debug-${{ github.sha }}
           if-no-files-found: warn
           retention-days: 7
+          include-hidden-files: true
           path: |
             .build/icli-ios13
-            .build/com.icli.icli_*_iphoneos-arm-ios13.deb
             .build/package-verification-ios13.json
             .build/swift-runtime-ios13.json
             .build/package-consumer-verification-ios13.json
