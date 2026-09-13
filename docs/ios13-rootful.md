@@ -48,6 +48,8 @@ make legacy-check
 
 That command verifies the Mach-O is arm64 with `minos 13.0`, checks signing and process-launch invariants, builds/extracts the rootful DEB, checks its architecture and firmware dependency, and builds a separate Swift Package consumer for an iOS 13 deployment target.
 
+Because iOS 13/14 do not ship the Swift concurrency runtime, the legacy build adds `@executable_path/../lib/icli` as a private runpath. Packaging inspects the executable for `@rpath/libswift*.dylib` dependencies and copies matching Xcode back-deployment runtimes (notably `libswift_Concurrency.dylib`) into `/usr/lib/icli`. `.build/swift-runtime-ios13.json` records the exact bundled runtime files, deployment floors, hashes, and runpaths, and package verification fails if a required concurrency runtime is missing.
+
 The pinned `libarchive.xcframework` dependency declares iOS 12 for its arm64 iOS slice, so it does not raise the iOS 13 deployment floor. `swift-argument-parser` 1.3.1 uses a Swift 5.7 package manifest and does not declare a higher iOS platform floor.
 
 ## Build the rootful TestHost and fixtures

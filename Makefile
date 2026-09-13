@@ -3,6 +3,7 @@ SHELL    := /bin/sh
 SDK      ?= $(shell xcrun --sdk iphoneos --show-sdk-path)
 TARGET   ?= arm64-apple-ios16.0
 LEGACY_TARGET ?= arm64-apple-ios13.0
+LEGACY_RPATH_FLAGS ?= -Xlinker -rpath -Xlinker @executable_path/../lib/icli
 SWIFT    ?= swift
 LDID     ?= ldid
 INSTALL  ?= /var/jb/usr/bin/icli
@@ -19,7 +20,7 @@ CONFIGURATION := release
 endif
 
 SWIFT_FLAGS := --configuration $(CONFIGURATION) --triple $(TARGET) --sdk $(SDK) \
-	--scratch-path $(BUILD)/swiftpm --product icli --force-resolved-versions
+	--scratch-path $(BUILD)/swiftpm --product icli --force-resolved-versions $(EXTRA_SWIFT_FLAGS)
 
 .PHONY: all debug legacy-rootful legacy-check legacy-fixtures resolve install clean deb deb-rootless deb-roothide deb-rootful deb-rootful-legacy
 
@@ -33,7 +34,7 @@ debug:
 	$(MAKE) DEBUG=1 all
 
 legacy-rootful:
-	$(MAKE) TARGET=$(LEGACY_TARGET) BIN=$(LEGACY_BIN) all
+	$(MAKE) TARGET=$(LEGACY_TARGET) BIN=$(LEGACY_BIN) EXTRA_SWIFT_FLAGS='$(LEGACY_RPATH_FLAGS)' all
 
 legacy-check:
 	sh scripts/check-legacy-package.sh

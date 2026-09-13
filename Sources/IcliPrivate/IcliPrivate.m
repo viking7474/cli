@@ -1018,13 +1018,13 @@ char *icli_ioreg_json(const char *plane) {
     icli_private_init();
     const char *planeName = (plane && plane[0]) ? plane : kIOServicePlane;
     mach_port_t master = MACH_PORT_NULL;
-#if defined(kIOMainPortDefault)
-    master = kIOMainPortDefault;
-#elif defined(kIOMasterPortDefault)
-    master = kIOMasterPortDefault;
-#else
-    IOMainPort(MACH_PORT_NULL, &master);
-#endif
+    kern_return_t (*mainPortFn)(mach_port_t, mach_port_t *) = sIOKit ? dlsym(sIOKit, "IOMainPort") : NULL;
+    kern_return_t (*masterPortFn)(mach_port_t, mach_port_t *) = sIOKit ? dlsym(sIOKit, "IOMasterPort") : NULL;
+    if (mainPortFn) {
+        if (mainPortFn(MACH_PORT_NULL, &master) != KERN_SUCCESS) master = MACH_PORT_NULL;
+    } else if (masterPortFn) {
+        if (masterPortFn(MACH_PORT_NULL, &master) != KERN_SUCCESS) master = MACH_PORT_NULL;
+    }
     io_registry_entry_t root = IORegistryGetRootEntry(master);
     if (!root) {
         NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"entries": @[], @"error": @"no io registry"} options:0 error:nil];

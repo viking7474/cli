@@ -133,6 +133,8 @@ jobs:
               output.write(f"- Binary SHA-256: `{report['binary_sha256']}`\n")
               output.write(f"- Deployment target: iOS `{report['minimum_ios']}`\n")
               output.write(f"- Package architecture: `{report['package_architecture']}`\n")
+              bundled = [item['name'] for item in report['swift_runtime']['bundled']]
+              output.write(f"- Bundled Swift back-deployment runtime: `{', '.join(bundled) if bundled else 'none'}`\n")
               output.write(f"- Swift Package consumer minimum iOS: `{consumer['minimum_ios']}`\n")
               output.write('- Runtime/device acceptance: **not run in GitHub Actions**\n')
           PY
@@ -148,6 +150,7 @@ jobs:
             .build/icli-ios13
             .build/com.icli.icli_*_iphoneos-arm-ios13.deb
             .build/package-verification-ios13.json
+            .build/swift-runtime-ios13.json
             .build/package-consumer-verification-ios13.json
             .build/icli-testhost_1.0_iphoneos-arm.deb
             .build/install-fixtures-ios13/icli-install-fixture.ipa

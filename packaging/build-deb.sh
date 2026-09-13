@@ -22,6 +22,9 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/DEBIAN" "$STAGE$PREFIX/usr/bin"
 cp "$BIN" "$STAGE$PREFIX/usr/bin/icli"
 chmod 755 "$STAGE$PREFIX/usr/bin/icli"
+if [ "$KIND" = rootful ] && [ "$MIN_IOS" = 13.0 ]; then
+  python3 "$ROOT/scripts/prepare-legacy-swift-runtime.py" "$BIN" "$STAGE" --minimum-ios "$MIN_IOS"
+fi
 mkdir -p "$STAGE$PREFIX/usr/share/doc/icli/licenses"
 cp "$ROOT/Resources/Licenses/"*.txt "$STAGE$PREFIX/usr/share/doc/icli/licenses/"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/LICENSE" "$STAGE$PREFIX/usr/share/doc/icli/"
