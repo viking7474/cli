@@ -2,7 +2,7 @@
 
 The package exports the `IcliKit` library and the `icli` executable. An iOS app or package manager can link `IcliKit` and call its functions in-process. It does not need to install or launch the CLI. The library product includes its private Objective-C bridge and statically linked LibArchive dependency; Argument Parser and the CLI's embedded Info.plist belong only to the executable target. Library targets declare no unsafe build flags.
 
-Requires an iOS 16 or later arm64 device and a compatible bootstrap for privileged device operations. This is an on-device library, not a macOS host SDK. Simulator runtime is not supported or tested.
+The package manifest permits iOS 13 so the library can be built for the experimental arm64/rootful legacy profile. The project's normal validated runtime remains iOS 16+; privileged behavior on iOS 13 must be verified per capability on a real device. See [Experimental iOS 13 rootful support](ios13-rootful.md). This is an on-device library, not a macOS host SDK. Simulator runtime is not supported or tested.
 
 ```swift
 // Package.swift

@@ -41,11 +41,24 @@ class Device:
         self.host = self.env.get('ICLI_SSH_HOST', '127.0.0.1')
         self.port = self.env.get('ICLI_SSH_PORT', '2333')
         self.user = self.env.get('ICLI_SSH_USER', 'mobile')
-        self.binary = self.env.get('ICLI_BINARY', '/var/jb/usr/bin/icli')
+        self.layout = self.env.get('ICLI_LAYOUT', 'rootless')
+        if self.layout not in {'rootless', 'rootful'}:
+            raise ValueError('ICLI_LAYOUT must be rootless or rootful for acceptance')
+        self.jbroot = '/var/jb' if self.layout == 'rootless' else '/'
+        self.package_arch = 'iphoneos-arm64' if self.layout == 'rootless' else 'iphoneos-arm'
+        default_binary = '/var/jb/usr/bin/icli' if self.layout == 'rootless' else '/usr/bin/icli'
+        default_local = ROOT / ('.build/icli' if self.layout == 'rootless' else '.build/icli-ios13')
+        self.binary = self.env.get('ICLI_BINARY', default_binary)
+        self.local_binary = Path(self.env.get('ICLI_LOCAL_BINARY', str(default_local)))
+        self.fixture_root = ROOT / ('.build/install-fixtures' if self.layout == 'rootless' else '.build/install-fixtures-ios13')
         self.options = ['-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new',
                         '-o', 'UserKnownHostsFile=' + str(ROOT / '.build/acceptance-known-hosts')]
         self.trace = []
         self.observations = []
+
+    def jb(self, path):
+        assert path.startswith('/')
+        return path if self.layout == 'rootful' else '/var/jb' + path
 
     def run(self, command, timeout=35, sudo=False):
         command = shlex.join(command) if isinstance(command, list) else command
@@ -90,8 +103,12 @@ class Device:
 
     def install(self):
         version = plistlib.loads((ROOT / 'Resources/Info.plist').read_bytes())['CFBundleShortVersionString']
-        package = ROOT / f'.build/com.icli.icli_{version}_iphoneos-arm64.deb'
-        subprocess.run([str(ROOT / 'packaging/build-deb.sh'), 'rootless'], cwd=ROOT, check=True)
+        suffix = '-ios13' if self.layout == 'rootful' else ''
+        package = ROOT / f'.build/com.icli.icli_{version}_{self.package_arch}{suffix}.deb'
+        if self.layout == 'rootful':
+            subprocess.run(['make', 'deb-rootful-legacy', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'CODE_SIGN_IDENTITY='], cwd=ROOT, check=True)
+        else:
+            subprocess.run([str(ROOT / 'packaging/build-deb.sh'), 'rootless'], cwd=ROOT, check=True)
         subprocess.run(self.prefix + ['scp', '-P', self.port] + self.options +
                        [str(package), self.user + '@' + self.host + ':/tmp/icli-acceptance.deb'], env=self.env, check=True)
         result = self.run(['dpkg', '-i', '/tmp/icli-acceptance.deb'], sudo=True)
@@ -101,7 +118,7 @@ class Device:
 @case('device_snapshot', 'runtime', ['device info', 'screen info'])
 def device_snapshot(d):
     info = d.cli('device', 'info')
-    assert info['jailbreak']['layout'] == 'rootless'
+    assert info['jailbreak']['layout'] == d.layout
     assert info['memory_bytes'] > 0 and info['processor_count'] > 0
     screen = d.cli('screen', 'info')
     assert screen['width'] > 0 and screen['height'] > 0 and screen['scale'] >= 1
@@ -583,9 +600,10 @@ def package_metadata(d):
 @case('launchd_services', 'system', ['svc load', 'svc unload', 'svc enable', 'svc disable', 'svc status'])
 def launchd_services(d):
     label = 'dev.owngoal.icli.testdaemon'
-    plist = f'/var/jb/Library/LaunchDaemons/{label}.plist'
+    plist = d.jb(f'/Library/LaunchDaemons/{label}.plist')
     folder = '/tmp/icli-daemons-' + uuid.uuid4().hex
-    body = plistlib.dumps({'Label': label, 'ProgramArguments': ['/var/jb/usr/bin/sleep', '3600'], 'KeepAlive': True, 'RunAtLoad': True}).decode()
+    sleep_path = d.jb('/usr/bin/sleep')
+    body = plistlib.dumps({'Label': label, 'ProgramArguments': [sleep_path, '3600'], 'KeepAlive': True, 'RunAtLoad': True}).decode()
     initial = d.cli('svc', 'status', label)
     assert initial['enabled'] and not initial['loaded'] and not initial['running'], initial
     d.cli('svc', 'status', 'bad label!', expected=1)
@@ -597,7 +615,7 @@ def launchd_services(d):
         assert loaded['verified'] and loaded['services'][0]['label'] == label, loaded
         time.sleep(1)
         status = d.cli('svc', 'status', label)
-        assert status['loaded'] and status['running'] and status['pid'] > 0 and status['program'] == '/var/jb/usr/bin/sleep', status
+        assert status['loaded'] and status['running'] and status['pid'] > 0 and status['program'] == sleep_path, status
         assert any(p['pid'] == status['pid'] for p in d.cli('proc', 'list', '--filter', 'sleep')['processes']), 'launchd pid is not a live process'
         assert d.cli('svc', 'load', plist, sudo=True)['unchanged'] is True
         assert d.cli('svc', 'disable', label, sudo=True)['changed'] is True
@@ -632,7 +650,7 @@ def app_refresh(d):
     folder = '/tmp/icli-apps-' + uuid.uuid4().hex
     app = folder + '/IcliInstallFixture.app'
     assert d.run(['mkdir', '-p', folder]).returncode == 0
-    d.upload(ROOT / '.build/install-fixtures/Payload/IcliInstallFixture.app', app)
+    d.upload(d.fixture_root / 'Payload/IcliInstallFixture.app', app)
     try:
         # APP-01: registration is proven by LaunchServices listing the bundle at that path.
         registered = d.cli('app', 'register', app)
@@ -653,14 +671,14 @@ def app_refresh(d):
         assert d.cli('app', 'unregister', app, '--force')['unregistered'] is True
         d.cli('app', 'info', bundle, expected=1)
         assert d.cli('app', 'unregister', app, '--force')['unregistered'] is False
-        d.upload(ROOT / '.build/install-fixtures/Payload/IcliInstallFixture.app', app)
+        d.upload(d.fixture_root / 'Payload/IcliInstallFixture.app', app)
         d.cli('app', 'register', app)
         d.run(['rm', '-rf', app])
         refreshed = d.cli('app', 'refresh', '--directory', folder)
         assert refreshed['registered'] == [] and len(refreshed['unregistered']) == 1 and not refreshed['unverified'], refreshed
         d.cli('app', 'info', bundle, expected=1)
         d.cli('app', 'refresh', '--directory', folder + '/nonexistent', expected=1)
-        d.upload(ROOT / '.build/install-fixtures/Payload/IcliInstallFixture.app', app)
+        d.upload(d.fixture_root / 'Payload/IcliInstallFixture.app', app)
         assert d.cli('app', 'refresh', '--directory', folder)['registered'] == [app.replace('/tmp/', '/var/tmp/')]
         # APP-04: batch unregistration of everything directly in a directory.
         d.cli('app', 'unregister-dir', folder, expected=1)
@@ -669,7 +687,7 @@ def app_refresh(d):
         d.cli('app', 'info', bundle, expected=1)
         assert d.cli('app', 'unregister', app, '--force')['unregistered'] is False
         # APP-02 on the bootstrap's own app directory, as root, restored by refresh.
-        path = '/var/jb/Applications/IcliTestHost.app'
+        path = d.jb('/Applications/IcliTestHost.app')
         d.cli('app', 'unregister', path, expected=1)
         assert d.cli('app', 'unregister', path, '--force', sudo=True)['unregistered'] is True
         assert BUNDLE not in json.dumps(d.cli('app', 'handlers', 'icli-test://reset'))
@@ -728,7 +746,8 @@ def account_password(d):
     password = d.env.get('ICLI_SSH_PASSWORD')
     assert password, 'account_password needs ICLI_SSH_PASSWORD so the runner can log in with the new value and restore the original'
     temporary = 'icli-acceptance-' + uuid.uuid4().hex[:12]
-    snapshot = d.run(['sh', '-c', 'grep ^mobile /var/jb/etc/master.passwd | cut -d: -f2'], sudo=True)
+    master_passwd = d.jb('/etc/master.passwd')
+    snapshot = d.run(['sh', '-c', f'grep ^mobile {master_passwd} | cut -d: -f2'], sudo=True)
     before = snapshot.stdout.strip()
     snapshot.icli_trace['stdout'] = '<redacted account hash>'
     assert before.startswith('$6$'), 'expected a sha512-crypt hash for mobile'
@@ -745,7 +764,8 @@ def account_password(d):
     changed = change(password, temporary)
     try:
         assert changed['user'] == 'mobile' and changed['spwd_db_records'] == 3 and changed['scheme'] == 'sha512crypt', changed
-        login = subprocess.run(d.prefix + ['ssh', '-p', d.port, '-o', 'NumberOfPasswordPrompts=1'] + d.options + [d.user + '@' + d.host, 'sudo -S -p "" sh -c "id -u; grep ^mobile /var/jb/etc/master.passwd | cut -d: -f2"'],
+        login_command = f'sudo -S -p "" sh -c "id -u; grep ^mobile {master_passwd} | cut -d: -f2"'
+        login = subprocess.run(d.prefix + ['ssh', '-p', d.port, '-o', 'NumberOfPasswordPrompts=1'] + d.options + [d.user + '@' + d.host, login_command],
                                env=dict(d.env, SSHPASS=temporary), input=temporary + '\n', capture_output=True, text=True, timeout=60)
         assert login.returncode == 0 and login.stdout.splitlines()[0] == '0', 'new password rejected by sshd or sudo: ' + login.stderr
         stored = login.stdout.splitlines()[1]
@@ -761,13 +781,13 @@ def account_password(d):
 @case('environment_report', 'runtime', ['env info', 'env basebin'])
 def environment(d):
     env = d.cli('env')
-    assert env['layout'] == 'rootless' and env['jbroot'] == '/var/jb' and env['platform_binary'] is True, env
+    assert env['layout'] == d.layout and env['jbroot'] == d.jbroot and env['platform_binary'] is True, env
     assert env['bootstrap_tools_present']['dpkg'] is True and env['roothide_runtime_active'] is False
     assert env['external_tools_used'] == {} and env['spawns_processes'] is False, env
     assert d.cli('env', 'info', sudo=True)['euid'] == 0
     absent = d.cli('env', 'basebin')
     assert absent['installed_present'] is False and 'bundled' not in absent, absent
-    d.observations.append('This vphone has no BaseBin (no /var/jb/basebin/.version); the installed side of the comparison reports installed_present=false.')
+    d.observations.append(f'This test device has no BaseBin at {d.jb("/basebin/.version")}; the installed side of the comparison reports installed_present=false.')
     archive = '/tmp/icli-basebin-' + uuid.uuid4().hex + '.tar'
     assert d.run(['sh', '-c', f'rm -rf /tmp/icli-bb && mkdir -p /tmp/icli-bb/basebin && printf "2.3.4\\n" > /tmp/icli-bb/basebin/.version && tar -C /tmp/icli-bb -cf {archive} basebin && rm -rf /tmp/icli-bb']).returncode == 0
     try:
@@ -845,7 +865,7 @@ def userspace_reboot(d):
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         d.cli('button', 'wake', expected=None)
-        if d.cli('env', expected=None).get('layout') == 'rootless' and d.cli('screen', 'info', expected=None).get('locked') is False:
+        if d.cli('env', expected=None).get('layout') == d.layout and d.cli('screen', 'info', expected=None).get('locked') is False:
             break
         time.sleep(3)
     assert d.cli('env')['platform_binary'] is True
@@ -867,7 +887,7 @@ def device_reboot(d):
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         d.cli('button', 'wake', expected=None)
-        if d.cli('env', expected=None).get('layout') == 'rootless' and d.cli('screen', 'info', expected=None).get('locked') is False:
+        if d.cli('env', expected=None).get('layout') == d.layout and d.cli('screen', 'info', expected=None).get('locked') is False:
             break
         time.sleep(3)
     assert d.cli('env')['platform_binary'] is True and d.cli('svc', 'status', 'com.openssh.sshd')['loaded']
@@ -877,7 +897,7 @@ def device_reboot(d):
 
 @case('repository_configuration', 'packages', ['pkg repos', 'pkg add-repo'])
 def repositories(d):
-    path = '/var/jb/etc/apt/sources.list.d/icli.list'
+    path = d.jb('/etc/apt/sources.list.d/icli.list')
     backup = '/tmp/icli-repo-backup-' + uuid.uuid4().hex
     saved = d.run(['test', '-e', path]).returncode == 0
     if saved:
@@ -943,18 +963,19 @@ def on_device_self_tests(d):
         assert report['passed'] + report['failed'] + report['skipped'] == len(report['tests']), report
         assert report['complete'] == (not failures and skipped == 0), report
 
-    mismatch = d.cli('tests', '--expect-layout', 'roothide', expected=1)
+    mismatch_layout = 'roothide' if d.layout != 'roothide' else 'rootless'
+    mismatch = d.cli('tests', '--expect-layout', mismatch_layout, expected=1)
     assert 'no tests were run' in mismatch['message'], mismatch
     invalid = d.run([d.binary, 'tests', '--expect-layout', 'invalid'])
     assert invalid.returncode != 0 and 'Expected layout must be' in invalid.stderr, invalid.stderr
-    partial = d.cli('tests', '--expect-layout', 'rootless', timeout=120, expected=1 if expected_failures else 0)
+    partial = d.cli('tests', '--expect-layout', d.layout, timeout=120, expected=1 if expected_failures else 0)
     verify_report(partial, skipped=1)
     assert any(row['name'] == 'app_registration_refresh' and row['result'] == 'skipped' for row in partial['tests'])
     fixture = '/tmp/icli-selftest-source-' + uuid.uuid4().hex + '.app'
-    d.upload(ROOT / '.build/install-fixtures/SelfTestFixture.app', fixture)
+    d.upload(d.fixture_root / 'SelfTestFixture.app', fixture)
     try:
-        result = d.cli('tests', '--expect-layout', 'rootless', '--registration-fixture', fixture, timeout=120, expected=1 if expected_failures else 0)
-        (ROOT / '.build/selftest-rootless.json').write_text(json.dumps(result, indent=2) + '\n')
+        result = d.cli('tests', '--expect-layout', d.layout, '--registration-fixture', fixture, timeout=120, expected=1 if expected_failures else 0)
+        (ROOT / f'.build/selftest-{d.layout}.json').write_text(json.dumps(result, indent=2) + '\n')
         verify_report(result, skipped=0)
         failure = d.cli('tests', '--registration-fixture', fixture + '/missing.app', timeout=120, expected=1)
         verify_report(failure, skipped=0, additional_failures={'app_registration_refresh'})
@@ -1066,13 +1087,13 @@ def main():
         device.install()
     fingerprint = device.run(['sha256sum', device.binary])
     assert fingerprint.returncode == 0, fingerprint.stderr
-    local_hash = hashlib.sha256((ROOT / '.build/icli').read_bytes()).hexdigest()
+    local_hash = hashlib.sha256(device.local_binary.read_bytes()).hexdigest()
     assert fingerprint.stdout.split()[0] == local_hash, 'device binary differs from local build'
     version = device.run([device.binary, '--version'])
     help_output = device.run([device.binary, '--experimental-dump-help'])
     assert help_output.returncode == 0, help_output.stderr
     inventory = command_inventory(json.loads(help_output.stdout)['command'])
-    report = {'environment': 'rootless', 'binary_sha256': fingerprint.stdout.split()[0],
+    report = {'environment': device.layout, 'binary_sha256': fingerprint.stdout.split()[0],
               'runner_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               'version': version.stdout.strip(), 'device': device.cli('device', 'info'), 'cases': []}
     if args.cases:

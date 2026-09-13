@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 private let defaultReadCap = 512 * 1024
 
@@ -24,11 +25,36 @@ public func listDirectory(_ path: String) throws -> [String: Any] {
 public func readFile(_ path: String, binary: Bool, limit: Int?) throws -> [String: Any] {
     let cap = limit ?? defaultReadCap
     guard (0...64 * 1024 * 1024).contains(cap) else { throw IcliError.failed("limit must be 0–67108864 bytes") }
-    let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-    defer { try? handle.close() }
-    let size = try handle.seekToEnd()
-    try handle.seek(toOffset: 0)
-    let data = try handle.read(upToCount: cap + 1) ?? Data()
+
+    // FileHandle's throwing bounded-read APIs are not available on iOS 13.0–13.3.
+    // Use POSIX I/O so the legacy profile really supports the full iOS 13 range.
+    let fd = Darwin.open(path, O_RDONLY)
+    guard fd >= 0 else { throw IcliError.failed("read \(path): \(String(cString: strerror(errno)))") }
+    defer { _ = Darwin.close(fd) }
+
+    var info = stat()
+    guard fstat(fd, &info) == 0 else { throw IcliError.failed("stat \(path): \(String(cString: strerror(errno)))") }
+    let size = info.st_size >= 0 ? UInt64(info.st_size) : 0
+    let requested = cap + 1
+    var data = Data(count: requested)
+    var bytesRead = 0
+    let readError: Int32? = data.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) -> Int32? in
+        guard let base = buffer.baseAddress else { return nil }
+        while bytesRead < requested {
+            let count = Darwin.read(fd, base.advanced(by: bytesRead), requested - bytesRead)
+            if count > 0 {
+                bytesRead += count
+            } else if count == 0 {
+                break
+            } else if errno != EINTR {
+                return errno
+            }
+        }
+        return nil
+    }
+    if let readError { throw IcliError.failed("read \(path): \(String(cString: strerror(readError)))") }
+    if bytesRead < data.count { data.removeSubrange(bytesRead..<data.count) }
+
     let truncated = data.count > cap
     let slice = truncated ? data.prefix(cap) : data
     if binary || !isLikelyText(slice) {

@@ -2,7 +2,10 @@
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KIND="${1:-rootless}"
-BIN="$ROOT/.build/icli"
+BIN="${ICLI_BINARY:-$ROOT/.build/icli}"
+case "$BIN" in /*) ;; *) BIN="$ROOT/$BIN" ;; esac
+MIN_IOS="${ICLI_MIN_IOS:-16.0}"
+OUTPUT_SUFFIX="${ICLI_OUTPUT_SUFFIX:-}"
 VERSION=$(python3 -c 'import plistlib, sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleShortVersionString"])' "$ROOT/Resources/Info.plist")
 STAGE="$ROOT/.build/deb-$KIND"
 case "$KIND" in
@@ -28,11 +31,11 @@ Name: icli
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: icli
-Depends: firmware (>= 16.0)
+Depends: firmware (>= $MIN_IOS)
 Section: Development
 Description: On-device iOS control CLI
 CONTROL
-OUTPUT="$ROOT/.build/com.icli.icli_${VERSION}_${ARCH}.deb"
+OUTPUT="$ROOT/.build/com.icli.icli_${VERSION}_${ARCH}${OUTPUT_SUFFIX}.deb"
 dpkg-deb --root-owner-group -b "$STAGE" "$OUTPUT"
 cmp "$BIN" "$STAGE$PREFIX/usr/bin/icli"
 echo "built $OUTPUT"

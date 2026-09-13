@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "IcliPackageConsumer",
-    platforms: [.iOS(.v16)],
+    platforms: [.iOS(.v13)],
     products: [.executable(name: "IcliPackageConsumer", targets: ["IcliPackageConsumer"])],
     dependencies: [.package(path: "../..")],
     targets: [

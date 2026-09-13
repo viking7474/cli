@@ -6,7 +6,7 @@ let repositoryDirectory = URL(fileURLWithPath: #filePath).deletingLastPathCompon
 
 let package = Package(
     name: "icli",
-    platforms: [.iOS(.v16)],
+    platforms: [.iOS(.v13)],
     products: [
         .library(name: "IcliKit", targets: ["IcliKit"]),
         .executable(name: "icli", targets: ["icli"]),

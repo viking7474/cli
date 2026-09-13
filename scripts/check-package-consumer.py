@@ -12,8 +12,10 @@ import subprocess
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--device', action='store_true', help='Sign the test consumer and run it through the acceptance SSH configuration.')
+parser.add_argument('--minimum-ios', choices=['13.0', '16.0'], default='16.0', help='Deployment target for the package consumer build.')
 args = parser.parse_args()
-work = root / '.build/package-consumer'
+legacy = args.minimum_ios == '13.0'
+work = root / ('.build/package-consumer-ios13' if legacy else '.build/package-consumer')
 snapshot = work / 'icli'
 consumer = work / 'consumer'
 version = plistlib.loads((root / 'Resources/Info.plist').read_bytes())['CFBundleShortVersionString']
@@ -41,7 +43,7 @@ manifest.write_text(manifest.read_text().replace('.package(path: "../..")',
                     f'.package(url: "{snapshot.as_uri()}", exact: "{version}")'))
 sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
 command = ['swift', 'build', '--package-path', str(consumer), '--scratch-path', str(work / 'build'),
-           '-c', 'release', '--triple', 'arm64-apple-ios16.0', '--sdk', sdk, '--product', 'IcliPackageConsumer']
+           '-c', 'release', '--triple', f'arm64-apple-ios{args.minimum_ios}', '--sdk', sdk, '--product', 'IcliPackageConsumer']
 subprocess.run(command, check=True)
 sources = [root / 'Package.swift'] + sorted((root / 'Sources').rglob('*')) + sorted((root / 'Resources').rglob('*'))
 source_hashes = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -53,6 +55,7 @@ output = Path(subprocess.check_output(command + ['--show-bin-path'], text=True).
 binary = work / 'IcliPackageConsumer'
 shutil.copy2(output, binary)
 report = {'version': version, 'product': 'IcliKit', 'dependency_kind': 'source-control exact version',
+          'minimum_ios': args.minimum_ios,
           'unsigned_consumer_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
           'source_sha256': source_hashes,
           'manifest_sha256': hashlib.sha256((root / 'Package.swift').read_bytes()).hexdigest()}
@@ -76,5 +79,6 @@ if args.device:
     report['application_identifier'] = identifier
     report['device_result'] = json.loads(result.stdout)
     device.run(['rm', '-f', remote])
-(root / '.build/package-consumer-verification.json').write_text(json.dumps(report, indent=2) + '\n')
-print('PASS external versioned Swift Package consumer:', binary)
+report_path = root / ('.build/package-consumer-verification-ios13.json' if legacy else '.build/package-consumer-verification.json')
+report_path.write_text(json.dumps(report, indent=2) + '\n')
+print('PASS external versioned Swift Package consumer:', binary, 'minimum iOS', args.minimum_ios)

@@ -64,12 +64,29 @@ public func environmentReport() throws -> [String: Any] {
     let basebinVersion = (try? String(contentsOfFile: root.jbrootPath("/basebin/.version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
     let tools = ["dpkg", "apt-get", "tcpdump", "sudo", "launchctl", "uicache", "sbreload", "jbctl"].reduce(into: [String: Bool]()) { $0[$1] = manager.isExecutableFile(atPath: root.binary($1)) }
     let version = ProcessInfo.processInfo.operatingSystemVersion
+    let compatibilityProfile: String
+    let compatibilityStatus: String
+    if version.majorVersion < 16 {
+        compatibilityProfile = "ios13-15-legacy"
+        compatibilityStatus = "experimental legacy runtime; validate private capabilities on this device"
+    } else if root.layout == .rootless {
+        compatibilityProfile = "ios16-rootless"
+        compatibilityStatus = "current validated release profile"
+    } else if root.layout == .roothide {
+        compatibilityProfile = "ios16-roothide"
+        compatibilityStatus = "experimental runtime profile"
+    } else {
+        compatibilityProfile = "ios16-rootful"
+        compatibilityStatus = "experimental runtime profile"
+    }
     return [
         "layout": root.layout.rawValue,
         "jbroot": root.jbroot,
         "jbroot_source": root.source,
         "rootfs_prefix": root.rootfsPath("/"),
         "ios_version": "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
+        "compatibility_profile": compatibilityProfile,
+        "compatibility_status": compatibilityStatus,
         "euid": Int(geteuid()),
         "platform_binary": platformBinary,
         "roothide_runtime_active": roothideRuntime,

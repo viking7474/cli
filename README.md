@@ -2,7 +2,7 @@
 
 Control your iPhone from the command line. Tap and swipe, enter text, inspect accessibility elements, capture screenshots, and read on-screen text, with JSON output for scripts and automation.
 
-icli runs on the device itself. Use it in a device terminal or over SSH from your Mac. It requires an arm64 device running iOS 16 or later with a compatible jailbreak bootstrap.
+icli runs on the device itself. Use it in a device terminal or over SSH from your Mac. The normal release profile targets arm64 devices running iOS 16 or later with a compatible jailbreak bootstrap. An experimental source-built **iOS 13+ rootful arm64** profile is available for older devices such as iPhone 6s; see [Experimental iOS 13 rootful support](docs/ios13-rootful.md).
 
 icli is a single, self-contained executable. It performs its work in-process using iOS frameworks and a statically linked archive library, without spawning subprocesses or invoking bootstrap tools. No additional runtime packages are required. `icli env` reports the detected environment, `spawns_processes: false`, and an empty `external_tools_used` object.
 
@@ -16,8 +16,9 @@ Download a DEB from [GitHub Releases](https://github.com/owngoal-dev/icli/releas
 | --- | --- | --- |
 | Rootless (`/var/jb`) | `iphoneos-arm64` | Tested on the project's rootless vphone |
 | RootHide | `iphoneos-arm64e` | Experimental; package checks pass, runtime remains unverified |
+| Rootful legacy | `iphoneos-arm` | Experimental source build for iOS 13+ arm64; physical iOS 13 acceptance still required |
 
-Both packages contain the same arm64 executable. The architecture label identifies the bootstrap layout. iOS 16 is the minimum deployment target; the [acceptance report](docs/rootless-acceptance.md) records the environment actually tested.
+The normal rootless and RootHide packages contain the same arm64 executable and keep iOS 16 as their minimum deployment target; the [acceptance report](docs/rootless-acceptance.md) records the environment actually tested. The legacy rootful profile produces a separate `arm64-apple-ios13.0` executable so its lower deployment target does not change the normal release binary.
 
 For the initial DEB installation below, use the bootstrap's `dpkg` and an account with permission to install packages. To connect over USB, you also need an SSH server on the device and `iproxy` on your Mac. These are installation and connection tools; icli does not invoke them.
 
@@ -174,6 +175,16 @@ make deb-roothide
 ./scripts/check-packages.sh
 ```
 
+For the experimental iOS 13+ rootful profile, use Xcode 15.4 and build the separate legacy artifact instead of changing the normal release target:
+
+```sh
+make legacy-rootful CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+make deb-rootful-legacy CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+make legacy-check
+```
+
+See [Experimental iOS 13 rootful support](docs/ios13-rootful.md) for TestHost, fixture, and device-acceptance commands.
+
 Swift Package Manager resolves Argument Parser and the static [LibArchive package](https://github.com/Lakr233/libarchive.xcframework) using the versions pinned in `Package.resolved`. Dependency checkouts and binary artifacts stay under `.build/swiftpm/`; no library sources or headers are vendored. Use `make resolve` after changing dependency versions.
 
 | Output | Location |
@@ -181,7 +192,10 @@ Swift Package Manager resolves Argument Parser and the static [LibArchive packag
 | Signed executable | `.build/icli` |
 | Rootless package | `.build/com.icli.icli_<version>_iphoneos-arm64.deb` |
 | Experimental RootHide package | `.build/com.icli.icli_<version>_iphoneos-arm64e.deb` |
+| Experimental iOS 13 rootful executable | `.build/icli-ios13` |
+| Experimental iOS 13 rootful package | `.build/com.icli.icli_<version>_iphoneos-arm-ios13.deb` |
 | Package verification report | `.build/package-verification.json` |
+| iOS 13 package verification report | `.build/package-verification-ios13.json` |
 
 The version comes from `Resources/Info.plist`. `make deb` builds the rootless package. Every build checks for forbidden process-launch imports. Package checks repeat that check and verify architecture, deployment target, entitlements, system-only linked libraries, a firmware-only DEB dependency, ownership, and identical executable contents across the two layouts. Import checks detect direct linked calls; runtime acceptance also checks the environment report.
 

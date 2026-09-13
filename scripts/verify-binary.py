@@ -3,6 +3,7 @@
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 
 def verify_no_process_imports(binary):
@@ -16,6 +17,6 @@ def verify_no_process_imports(binary):
 
 
 if __name__ == '__main__':
-    binary = Path(__file__).resolve().parents[1] / '.build/icli'
+    binary = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[1] / '.build/icli'
     verify_no_process_imports(binary)
-    print('PASS no process-launch imports')
+    print('PASS no process-launch imports:', binary)

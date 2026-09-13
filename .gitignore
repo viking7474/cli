@@ -3,3 +3,4 @@
 __pycache__/
 *.deb
 packaging/root/ 
+.catdesk
