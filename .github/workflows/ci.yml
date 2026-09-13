@@ -1,0 +1,155 @@
+name: Build & Test
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Makefile'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - 'Sources/**'
+      - 'Resources/**'
+      - 'Tests/**'
+      - 'packaging/**'
+      - 'scripts/**'
+  pull_request:
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Makefile'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - 'Sources/**'
+      - 'Resources/**'
+      - 'Tests/**'
+      - 'packaging/**'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Build profile to run
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - ios13
+          - ios16
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios16:
+    name: iOS 16 release profile
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'both' || inputs.profile == 'ios16'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          swift --version
+
+      - name: Install packaging tools
+        run: brew install ldid dpkg
+
+      - name: Build iOS 16 CLI
+        run: make all CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+
+      - name: Verify release packages
+        run: ./scripts/check-packages.sh
+
+      - name: Verify Swift Package consumer
+        run: python3 scripts/check-package-consumer.py --minimum-ios 16.0
+
+      - name: Upload iOS 16 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icli-ios16-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            .build/icli
+            .build/com.icli.icli_*_iphoneos-arm64.deb
+            .build/com.icli.icli_*_iphoneos-arm64e.deb
+            .build/package-verification.json
+            .build/package-consumer-verification.json
+
+  ios13-legacy:
+    name: iOS 13 legacy rootful (Xcode 15.4)
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'both' || inputs.profile == 'ios13'
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Xcode 15.4 toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          swift --version
+          test "$(xcodebuild -version | head -n 1)" = "Xcode 15.4"
+
+      - name: Install packaging tools
+        run: brew install ldid dpkg
+
+      - name: Build and verify iOS 13 legacy package
+        run: make legacy-check
+
+      - name: Build iOS 13 TestHost and install fixtures
+        run: make legacy-fixtures
+
+      - name: Summarize legacy artifacts
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('.build/package-verification-ios13.json').read_text())
+          consumer = json.loads(Path('.build/package-consumer-verification-ios13.json').read_text())
+          summary = Path(__import__('os').environ['GITHUB_STEP_SUMMARY'])
+          with summary.open('a') as output:
+              output.write('## iOS 13 legacy build\n\n')
+              output.write(f"- Version: `{report['version']}`\n")
+              output.write(f"- Binary SHA-256: `{report['binary_sha256']}`\n")
+              output.write(f"- Deployment target: iOS `{report['minimum_ios']}`\n")
+              output.write(f"- Package architecture: `{report['package_architecture']}`\n")
+              output.write(f"- Swift Package consumer minimum iOS: `{consumer['minimum_ios']}`\n")
+              output.write('- Runtime/device acceptance: **not run in GitHub Actions**\n')
+          PY
+
+      - name: Upload iOS 13 legacy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icli-ios13-rootful-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            .build/icli-ios13
+            .build/com.icli.icli_*_iphoneos-arm-ios13.deb
+            .build/package-verification-ios13.json
+            .build/package-consumer-verification-ios13.json
+            .build/icli-testhost_1.0_iphoneos-arm.deb
+            .build/install-fixtures-ios13/icli-install-fixture.ipa
+            .build/install-fixtures-ios13/icli-install-fixture.deb
+            .build/install-fixtures-ios13/SelfTestFixture.app
